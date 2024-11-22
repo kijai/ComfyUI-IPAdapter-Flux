@@ -181,7 +181,7 @@ class ApplyIPAdapterFlux:
         # set model
         is_patched = is_model_pathched(model.model)
         bi = model.clone()
-        tyanochky = bi.model
+        tyanochky = bi.model.to(mm.get_torch_device())
         FluxUpdateModules(tyanochky, ip_attn_procs, image_prompt_embeds, is_patched)
         return (bi,)
 
