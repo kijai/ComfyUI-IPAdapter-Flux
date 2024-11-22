@@ -8,6 +8,8 @@ from PIL import Image
 import numpy as np
 from .attention_processor import IPAFluxAttnProcessor2_0
 from .utils import is_model_pathched, FluxUpdateModules
+from comfy.utils import load_torch_file
+import comfy.model_management as mm
 
 MODELS_DIR = os.path.join(folder_paths.models_dir, "ipadapter-flux")
 if "ipadapter-flux" not in folder_paths.folder_names_and_paths:
@@ -46,7 +48,7 @@ class InstantXFluxIPAdapterModel:
         self.image_encoder = SiglipVisionModel.from_pretrained(self.image_encoder_path).to(self.device, dtype=torch.bfloat16)
         self.clip_image_processor = AutoProcessor.from_pretrained(self.image_encoder_path)
         # state_dict
-        self.state_dict = torch.load(os.path.join(MODELS_DIR,self.ip_ckpt), map_location="cpu")
+        self.state_dict = load_torch_file(os.path.join(MODELS_DIR,self.ip_ckpt), device=device)
         self.joint_attention_dim = 4096
         self.hidden_size = 3072
 
@@ -85,10 +87,25 @@ class InstantXFluxIPAdapterModel:
         return ip_attn_procs
     
     def load_ip_adapter(self, flux_model, weight, timestep_percent_range=(0.0, 1.0)):
-        self.image_proj_model.load_state_dict(self.state_dict["image_proj"], strict=True)
-        ip_attn_procs = self.set_ip_adapter(flux_model, weight, timestep_percent_range)
-        ip_layers = torch.nn.ModuleList(ip_attn_procs.values())
-        ip_layers.load_state_dict(self.state_dict["ip_adapter"], strict=True)
+    # Check if the keys have prefixes
+        if any(k.startswith("image_proj_") for k in self.state_dict.keys()):
+            # Load image_proj state dict with prefixed keys
+            image_proj_state_dict = {k[len("image_proj_"):]: v for k, v in self.state_dict.items() if k.startswith("image_proj_")}
+            self.image_proj_model.load_state_dict(image_proj_state_dict, strict=True)
+            
+            ip_attn_procs = self.set_ip_adapter(flux_model, weight, timestep_percent_range)
+            ip_layers = torch.nn.ModuleList(ip_attn_procs.values())
+            
+            # Load ip_adapter state dict with prefixed keys
+            ip_adapter_state_dict = {k[len("ip_adapter_"):]: v for k, v in self.state_dict.items() if k.startswith("ip_adapter_")}
+            ip_layers.load_state_dict(ip_adapter_state_dict, strict=True)
+        else:
+            # Load state dict without prefixes (old model)
+            self.image_proj_model.load_state_dict(self.state_dict["image_proj"], strict=True)
+            ip_attn_procs = self.set_ip_adapter(flux_model, weight, timestep_percent_range)
+            ip_layers = torch.nn.ModuleList(ip_attn_procs.values())
+            ip_layers.load_state_dict(self.state_dict["ip_adapter"], strict=True)
+        
         return ip_attn_procs
 
     @torch.inference_mode()
@@ -110,7 +127,7 @@ class IPAdapterFluxLoader:
         return {"required": {
                 "ipadapter": (folder_paths.get_filename_list("ipadapter-flux"),),
                 "clip_vision": (["google/siglip-so400m-patch14-384"],),
-                "provider": (["cuda", "cpu"],),
+                "device": (["main_device", "offload_device"],),
             }
         }
     RETURN_TYPES = ("IP_ADAPTER_FLUX_INSTANTX",)
@@ -118,9 +135,13 @@ class IPAdapterFluxLoader:
     FUNCTION = "load_model"
     CATEGORY = "InstantXNodes"
 
-    def load_model(self, ipadapter, clip_vision, provider):
+    def load_model(self, ipadapter, clip_vision, device):
         logging.info("Loading InstantX IPAdapter Flux model.")
-        model = InstantXFluxIPAdapterModel(image_encoder_path=clip_vision, ip_ckpt=ipadapter, device=provider, num_tokens=128)
+        if device == "main_device":
+            device = mm.get_torch_device()
+        elif device == "offload_device":
+            device = mm.unet_offload_device()
+        model = InstantXFluxIPAdapterModel(image_encoder_path=clip_vision, ip_ckpt=ipadapter, device=device, num_tokens=128)
         return (model,)
 
 class ApplyIPAdapterFlux:
