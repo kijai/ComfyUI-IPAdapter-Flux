@@ -118,11 +118,11 @@ class InstantXFluxIPAdapterModel:
             self.image_encoder.to(self.device)
             clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=self.image_encoder.dtype)).pooler_output
             self.image_encoder.to(self.offload_device)
-            clip_image_embeds = clip_image_embeds.to(dtype=torch.bfloat16)
+            clip_image_embeds = clip_image_embeds.to(dtype=torch.bfloat16).to(self.device)
         else:
             clip_image_embeds = clip_image_embeds.to(self.device, dtype=torch.bfloat16)
         self.image_proj_model.to(self.device)
-        image_prompt_embeds = self.image_proj_model(clip_image_embeds)
+        image_prompt_embeds = self.image_proj_model(clip_image_embeds).to(self.device)
         self.image_proj_model.to(self.offload_device)
         return image_prompt_embeds
 
@@ -181,7 +181,7 @@ class ApplyIPAdapterFlux:
         # set model
         is_patched = is_model_pathched(model.model)
         bi = model.clone()
-        tyanochky = bi.model.to(mm.get_torch_device())
+        tyanochky = bi.model
         FluxUpdateModules(tyanochky, ip_attn_procs, image_prompt_embeds, is_patched)
         return (bi,)
 
