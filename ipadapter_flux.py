@@ -41,6 +41,7 @@ class MLPProjModel(torch.nn.Module):
 class InstantXFluxIPAdapterModel:
     def __init__(self, image_encoder_path, ip_ckpt, device, num_tokens=4):
         self.device = device
+        self.offload_device = mm.unet_offload_device()
         self.image_encoder_path = image_encoder_path
         self.ip_ckpt = ip_ckpt
         self.num_tokens = num_tokens
@@ -114,11 +115,15 @@ class InstantXFluxIPAdapterModel:
             if isinstance(pil_image, Image.Image):
                 pil_image = [pil_image]
             clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
+            self.image_encoder.to(self.device)
             clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=self.image_encoder.dtype)).pooler_output
+            self.image_encoder.to(self.offload_device)
             clip_image_embeds = clip_image_embeds.to(dtype=torch.bfloat16)
         else:
             clip_image_embeds = clip_image_embeds.to(self.device, dtype=torch.bfloat16)
+        self.image_proj_model.to(self.device)
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
+        self.image_proj_model.to(self.offload_device)
         return image_prompt_embeds
 
 class IPAdapterFluxLoader:
